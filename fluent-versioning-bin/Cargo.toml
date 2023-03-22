@@ -1,0 +1,14 @@
+[package]
+name = "fluent-versioning-bin"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = { version = "4.1.11", features = ["derive"] }
+fluent-versioning = { version = "0.1.0", path = "../fluent-versioning" }
+owo-colors = { version = "3.5.0", features = ["supports-colors"] }
+thiserror = "1.0.40"
+
+[[bin]]
+name = "fluent-versioning"
+path = "src/main.rs"
