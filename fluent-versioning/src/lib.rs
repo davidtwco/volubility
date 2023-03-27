@@ -8,6 +8,8 @@ use thiserror::Error;
 mod owned;
 mod pretty;
 
+pub use crate::pretty::to_string;
+
 /// Default separator used with version suffixes.
 pub static DEFAULT_SEPARATOR: &'static str = "---";
 

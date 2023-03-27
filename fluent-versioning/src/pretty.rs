@@ -15,7 +15,7 @@ fn print_indentation_at(depth: usize, f: &mut fmt::Formatter<'_>) -> fmt::Result
 struct HeaderComment<'a, S, const HEADERNESS: usize>(&'a Comment<S>);
 
 /// `Display` but local to this crate so that it can be implemented for `fluent_syntax` types.
-trait PrettyPrint {
+pub trait PrettyPrint {
     fn print(&self, indentation_depth: usize, f: &mut fmt::Formatter<'_>) -> fmt::Result;
 }
 
@@ -25,6 +25,11 @@ impl<T: PrettyPrint> fmt::Display for ForwardToPrettyPrint<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.print(0, f)
     }
+}
+
+/// Pretty-print a Fluent AST node back into surface Fluent syntax.
+pub fn to_string<T: PrettyPrint>(node: T) -> String {
+    ForwardToPrettyPrint(node).to_string()
 }
 
 impl<S: fmt::Display> PrettyPrint for Resource<S> {
