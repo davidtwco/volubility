@@ -1,4 +1,3 @@
-use fluent_bundle::FluentResource;
 use fluent_syntax::ast::{
     Attribute, CallArguments, Comment, Entry, Expression, Identifier, InlineExpression, Message,
     NamedArgument, Pattern, PatternElement, Resource, Term, Variant, VariantKey,
@@ -25,20 +24,6 @@ struct ForwardToPrettyPrint<T: PrettyPrint>(T);
 impl<T: PrettyPrint> fmt::Display for ForwardToPrettyPrint<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.print(0, f)
-    }
-}
-
-impl PrettyPrint for FluentResource {
-    fn print(&self, indentation_depth: usize, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let count = self.entries().count();
-        for (i, entry) in self.entries().enumerate() {
-            entry.print(indentation_depth, f)?;
-            if (i + 1) != count {
-                writeln!(f, "")?;
-                print_indentation_at(indentation_depth, f)?;
-            }
-        }
-        Ok(())
     }
 }
 
@@ -327,7 +312,7 @@ impl<S: fmt::Display> PrettyPrint for Identifier<S> {
 #[cfg(test)]
 mod pretty_print_tests {
     use super::ForwardToPrettyPrint;
-    use fluent_bundle::FluentResource;
+    use fluent_syntax::parser::parse;
 
     /// Helper macro for constructing tests which assert that the pretty printed input parses to
     /// the same AST as the original input.
@@ -336,16 +321,13 @@ mod pretty_print_tests {
             #[test]
 
             fn $name() {
-                let trimmed_code = $code.trim().to_string();
+                let trimmed_code = $code.trim();
 
-                let parsed = FluentResource::try_new(trimmed_code.clone()).unwrap();
-                let pretty = ForwardToPrettyPrint(parsed).to_string();
-                let pretty_parsed = FluentResource::try_new(pretty).unwrap();
+                let parsed = parse(trimmed_code).unwrap();
+                let pretty = ForwardToPrettyPrint(parsed.clone()).to_string();
+                let pretty_parsed = parse(pretty.as_ref()).unwrap();
 
-                // Can't clone so just parse again..
-                let parsed = FluentResource::try_new(trimmed_code).unwrap();
-
-                for (parsed, pretty_parsed) in parsed.entries().zip(pretty_parsed.entries()) {
+                for (parsed, pretty_parsed) in parsed.body.iter().zip(pretty_parsed.body.iter()) {
                     assert_eq!(parsed, pretty_parsed);
                 }
             }

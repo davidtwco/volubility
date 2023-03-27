@@ -1,7 +1,8 @@
 use clap::Parser;
-use fluent_versioning::{check, MessageIdentifier, DEFAULT_SEPARATOR};
+use fluent_versioning::{check, DEFAULT_SEPARATOR};
 use owo_colors::{OwoColorize, Stream};
 use std::{
+    borrow::Cow,
     ffi::OsStr,
     fs::{read_to_string, File, OpenOptions},
     io,
@@ -134,12 +135,12 @@ fn main() -> Result<()> {
     let input_str = read_to_string(&args.input).map_err(Error::ReadInputFile)?;
 
     if args.check {
-        for (MessageIdentifier(message_id, attribute_id), error) in
-            check(&args.suffix_separator, reference_str, input_str)?
+        for ((message_id, attribute_id), error) in
+            check(&args.suffix_separator, &reference_str, &input_str)?
         {
             let identifier = match attribute_id {
-                Some(id) => format!("{message_id}.{id}"),
-                None => message_id,
+                Some(id) => Cow::Owned(format!("{message_id}.{id}")),
+                None => Cow::Borrowed(message_id),
             };
             let label = "error:".if_supports_color(Stream::Stdout, |text| text.bright_red());
             eprintln!("{label} `{identifier}`: {error}");

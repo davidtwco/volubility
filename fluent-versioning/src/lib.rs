@@ -1,7 +1,6 @@
-use fluent_bundle::FluentResource;
 use fluent_syntax::{
-    ast::{Entry, Identifier, Pattern},
-    parser::ParserError,
+    ast::{Entry, Identifier, Pattern, Resource},
+    parser::{parse, ParserError},
 };
 use std::{collections::HashMap, fmt, num::ParseIntError};
 use thiserror::Error;
@@ -57,14 +56,7 @@ fn parse_versioned_identifier<'a>(
 /// "Message" here deviates slightly from what a message is to Fluent, in that this alias can
 /// optionally identify a message's attribute, since we consider these the same for the purposes of
 /// versioning.
-#[derive(Debug, Eq, Hash, PartialEq)]
-pub struct MessageIdentifier<S>(pub S, pub Option<S>);
-
-impl<'a> MessageIdentifier<&'a str> {
-    fn to_owned(&self) -> MessageIdentifier<String> {
-        MessageIdentifier(self.0.to_owned(), self.1.map(|inner| inner.to_owned()))
-    }
-}
+pub type MessageIdentifier<'a> = (&'a str, Option<&'a str>);
 
 /// Convenience alias for a message's content.
 type MessageContent<'a> = &'a Pattern<&'a str>;
@@ -181,29 +173,26 @@ fn check_versioning(
 
 fn collect_reference_messages<'a>(
     separator: &str,
-    reference: &'a FluentResource,
-) -> Result<HashMap<MessageIdentifier<&'a str>, (Versioned, MessageContent<'a>)>> {
+    reference: &'a Resource<&'a str>,
+) -> Result<HashMap<MessageIdentifier<'a>, (Versioned, MessageContent<'a>)>> {
     let mut map = HashMap::new();
-    for entry in reference.entries() {
+    for entry in &reference.body {
         match entry {
             Entry::Message(message) => {
                 let (id, version) = parse_versioned_identifier(separator, &message.id)?;
                 if let Some(value) = &message.value {
-                    map.insert(MessageIdentifier(id, None), (version, value));
+                    map.insert((id, None), (version, value));
                 }
 
                 for attribute in &message.attributes {
                     let (attribute_id, version) =
                         parse_versioned_identifier(separator, &attribute.id)?;
-                    map.insert(
-                        MessageIdentifier(id, Some(attribute_id)),
-                        (version, &attribute.value),
-                    );
+                    map.insert((id, Some(attribute_id)), (version, &attribute.value));
                 }
             }
             Entry::Term(term) => {
                 let (id, version) = parse_versioned_identifier(separator, &term.id)?;
-                map.insert(MessageIdentifier(id, None), (version, &term.value));
+                map.insert((id, None), (version, &term.value));
             }
             Entry::Comment(_)
             | Entry::GroupComment(_)
@@ -216,41 +205,41 @@ fn collect_reference_messages<'a>(
 
 fn collect_incorrect_versioning<'refr, 'inpt>(
     separator: &str,
-    reference_messages: &HashMap<MessageIdentifier<&'refr str>, (Versioned, MessageContent<'refr>)>,
-    input: &'inpt FluentResource,
-) -> Result<Vec<(MessageIdentifier<String>, IncorrectVersioning)>> {
+    reference_messages: &HashMap<MessageIdentifier<'refr>, (Versioned, MessageContent<'refr>)>,
+    input: Resource<&'inpt str>,
+) -> Result<Vec<(MessageIdentifier<'inpt>, IncorrectVersioning)>> {
     let mut incorrect_versions = Vec::new();
-    for entry in input.entries() {
+    for entry in &input.body {
         match entry {
             Entry::Message(message) => {
                 let (id, version) = parse_versioned_identifier(separator, &message.id)?;
                 if let Some(value) = &message.value {
-                    let key = MessageIdentifier(id, None);
+                    let key = (id, None);
                     if let Some(error) =
                         check_versioning(version, &value, reference_messages.get(&key))
                     {
-                        incorrect_versions.push((key.to_owned(), error));
+                        incorrect_versions.push((key, error));
                     }
                 }
 
                 for attribute in &message.attributes {
                     let (attribute_id, version) =
                         parse_versioned_identifier(separator, &attribute.id)?;
-                    let key = MessageIdentifier(id, Some(attribute_id));
+                    let key = (id, Some(attribute_id));
                     if let Some(error) =
                         check_versioning(version, &attribute.value, reference_messages.get(&key))
                     {
-                        incorrect_versions.push((key.to_owned(), error));
+                        incorrect_versions.push((key, error));
                     }
                 }
             }
             Entry::Term(term) => {
                 let (id, version) = parse_versioned_identifier(separator, &term.id)?;
-                let key = MessageIdentifier(id, None);
+                let key = (id, None);
                 if let Some(error) =
                     check_versioning(version, &term.value, reference_messages.get(&key))
                 {
-                    incorrect_versions.push((key.to_owned(), error));
+                    incorrect_versions.push((key, error));
                 }
             }
             Entry::Comment(_)
@@ -264,20 +253,20 @@ fn collect_incorrect_versioning<'refr, 'inpt>(
 
 /// Check that the Fluent source `input_src` is appropriately versioned given an unversioned or
 /// previously versioned `reference_str`.
-pub fn check(
+pub fn check<'refr, 'inpt>(
     separator: &str,
-    reference: String,
-    input: String,
-) -> Result<Vec<(MessageIdentifier<String>, IncorrectVersioning)>> {
-    let reference = FluentResource::try_new(reference).map_err(|(_, mut errs)| {
+    reference: &'refr str,
+    input: &'inpt str,
+) -> Result<Vec<(MessageIdentifier<'inpt>, IncorrectVersioning)>> {
+    let reference = parse(reference).map_err(|(_, mut errs)| {
         Error::ParseReference(errs.pop().expect("parsing failure w/ no errs"))
     })?;
-    let input = FluentResource::try_new(input).map_err(|(_, mut errs)| {
+    let input: Resource<&'inpt str> = parse(input).map_err(|(_, mut errs)| {
         Error::ParseInput(errs.pop().expect("parsing failure w/ no errs"))
     })?;
 
     let reference_messages = collect_reference_messages(separator, &reference)?;
-    collect_incorrect_versioning(separator, &reference_messages, &input)
+    collect_incorrect_versioning(separator, &reference_messages, input)
 }
 
 #[cfg(test)]
@@ -321,17 +310,12 @@ mod versioned_identifier_tests {
 
 #[cfg(test)]
 mod check_tests {
-    use super::{check, IncorrectVersioning, MessageIdentifier, DEFAULT_SEPARATOR};
+    use super::{check, IncorrectVersioning, DEFAULT_SEPARATOR};
 
     #[test]
     fn new_unversioned() {
         assert_eq!(
-            check(
-                DEFAULT_SEPARATOR,
-                "".to_string(),
-                "new = content".to_string(),
-            )
-            .unwrap(),
+            check(DEFAULT_SEPARATOR, "", "new = content",).unwrap(),
             vec![],
         );
     }
@@ -339,12 +323,7 @@ mod check_tests {
     #[test]
     fn new_initial_version_eq_one() {
         assert_eq!(
-            check(
-                DEFAULT_SEPARATOR,
-                "".to_string(),
-                "new---1 = content".to_string(),
-            )
-            .unwrap(),
+            check(DEFAULT_SEPARATOR, "", "new---1 = content",).unwrap(),
             vec![],
         );
     }
@@ -352,28 +331,15 @@ mod check_tests {
     #[test]
     fn new_initial_version_gt_one() {
         assert_eq!(
-            check(
-                DEFAULT_SEPARATOR,
-                "".to_string(),
-                "new---2 = content".to_string(),
-            )
-            .unwrap(),
-            vec![(
-                MessageIdentifier("new".to_string(), None),
-                IncorrectVersioning::BadInitialVersion
-            )],
+            check(DEFAULT_SEPARATOR, "", "new---2 = content",).unwrap(),
+            vec![(("new", None), IncorrectVersioning::BadInitialVersion)],
         );
     }
 
     #[test]
     fn existing_unversioned_unchanged() {
         assert_eq!(
-            check(
-                DEFAULT_SEPARATOR,
-                "new = content".to_string(),
-                "new = content".to_string(),
-            )
-            .unwrap(),
+            check(DEFAULT_SEPARATOR, "new = content", "new = content",).unwrap(),
             vec![],
         );
     }
@@ -383,26 +349,18 @@ mod check_tests {
         assert_eq!(
             check(
                 DEFAULT_SEPARATOR,
-                "new = content".to_string(),
-                "new = different content".to_string(),
+                "new = content",
+                "new = different content",
             )
             .unwrap(),
-            vec![(
-                MessageIdentifier("new".to_string(), None),
-                IncorrectVersioning::NoInitialVersion
-            )],
+            vec![(("new", None), IncorrectVersioning::NoInitialVersion)],
         );
     }
 
     #[test]
     fn existing_initial_version_eq_one_unchanged() {
         assert_eq!(
-            check(
-                DEFAULT_SEPARATOR,
-                "new = content".to_string(),
-                "new---1 = content".to_string(),
-            )
-            .unwrap(),
+            check(DEFAULT_SEPARATOR, "new = content", "new---1 = content",).unwrap(),
             vec![],
         );
     }
@@ -412,8 +370,8 @@ mod check_tests {
         assert_eq!(
             check(
                 DEFAULT_SEPARATOR,
-                "new = content".to_string(),
-                "new---1 = different content".to_string(),
+                "new = content",
+                "new---1 = different content",
             )
             .unwrap(),
             vec![],
@@ -423,16 +381,8 @@ mod check_tests {
     #[test]
     fn existing_initial_version_gt_one_unchanged() {
         assert_eq!(
-            check(
-                DEFAULT_SEPARATOR,
-                "new = content".to_string(),
-                "new---2 = content".to_string(),
-            )
-            .unwrap(),
-            vec![(
-                MessageIdentifier("new".to_string(), None),
-                IncorrectVersioning::BadInitialVersion
-            )],
+            check(DEFAULT_SEPARATOR, "new = content", "new---2 = content",).unwrap(),
+            vec![(("new", None), IncorrectVersioning::BadInitialVersion)],
         );
     }
 
@@ -441,30 +391,19 @@ mod check_tests {
         assert_eq!(
             check(
                 DEFAULT_SEPARATOR,
-                "new = content".to_string(),
-                "new---2 = different content".to_string(),
+                "new = content",
+                "new---2 = different content",
             )
             .unwrap(),
-            vec![(
-                MessageIdentifier("new".to_string(), None),
-                IncorrectVersioning::BadInitialVersion
-            )],
+            vec![(("new", None), IncorrectVersioning::BadInitialVersion)],
         );
     }
 
     #[test]
     fn existing_version_removed_unchanged() {
         assert_eq!(
-            check(
-                DEFAULT_SEPARATOR,
-                "new---1 = content".to_string(),
-                "new = content".to_string(),
-            )
-            .unwrap(),
-            vec![(
-                MessageIdentifier("new".to_string(), None),
-                IncorrectVersioning::VersionRemoved
-            )],
+            check(DEFAULT_SEPARATOR, "new---1 = content", "new = content",).unwrap(),
+            vec![(("new", None), IncorrectVersioning::VersionRemoved)],
         );
     }
 
@@ -473,26 +412,18 @@ mod check_tests {
         assert_eq!(
             check(
                 DEFAULT_SEPARATOR,
-                "new---1 = content".to_string(),
-                "new = different content".to_string(),
+                "new---1 = content",
+                "new = different content",
             )
             .unwrap(),
-            vec![(
-                MessageIdentifier("new".to_string(), None),
-                IncorrectVersioning::VersionRemoved
-            )],
+            vec![(("new", None), IncorrectVersioning::VersionRemoved)],
         );
     }
 
     #[test]
     fn existing_matching_version_unchanged() {
         assert_eq!(
-            check(
-                DEFAULT_SEPARATOR,
-                "new---1 = content".to_string(),
-                "new---1 = content".to_string(),
-            )
-            .unwrap(),
+            check(DEFAULT_SEPARATOR, "new---1 = content", "new---1 = content",).unwrap(),
             vec![],
         );
     }
@@ -500,32 +431,16 @@ mod check_tests {
     #[test]
     fn existing_mismatching_version_ref_unchanged() {
         assert_eq!(
-            check(
-                DEFAULT_SEPARATOR,
-                "new---2 = content".to_string(),
-                "new---1 = content".to_string(),
-            )
-            .unwrap(),
-            vec![(
-                MessageIdentifier("new".to_string(), None),
-                IncorrectVersioning::UnnecessaryVersionChange
-            )],
+            check(DEFAULT_SEPARATOR, "new---2 = content", "new---1 = content",).unwrap(),
+            vec![(("new", None), IncorrectVersioning::UnnecessaryVersionChange)],
         );
     }
 
     #[test]
     fn existing_mismatching_version_inpt_unchanged() {
         assert_eq!(
-            check(
-                DEFAULT_SEPARATOR,
-                "new---1 = content".to_string(),
-                "new---2 = content".to_string(),
-            )
-            .unwrap(),
-            vec![(
-                MessageIdentifier("new".to_string(), None),
-                IncorrectVersioning::UnnecessaryVersionChange
-            )],
+            check(DEFAULT_SEPARATOR, "new---1 = content", "new---2 = content",).unwrap(),
+            vec![(("new", None), IncorrectVersioning::UnnecessaryVersionChange)],
         );
     }
 
@@ -534,8 +449,8 @@ mod check_tests {
         assert_eq!(
             check(
                 DEFAULT_SEPARATOR,
-                "new---1 = content".to_string(),
-                "new---2 = different content".to_string(),
+                "new---1 = content",
+                "new---2 = different content",
             )
             .unwrap(),
             vec![],
@@ -547,12 +462,12 @@ mod check_tests {
         assert_eq!(
             check(
                 DEFAULT_SEPARATOR,
-                "new---2 = content".to_string(),
-                "new---1 = different content".to_string(),
+                "new---2 = content",
+                "new---1 = different content",
             )
             .unwrap(),
             vec![(
-                MessageIdentifier("new".to_string(), None),
+                ("new", None),
                 IncorrectVersioning::ReferenceVersionGreaterOrEqual
             )],
         );
@@ -563,12 +478,12 @@ mod check_tests {
         assert_eq!(
             check(
                 DEFAULT_SEPARATOR,
-                "new---2 = content".to_string(),
-                "new---2 = different content".to_string(),
+                "new---2 = content",
+                "new---2 = different content",
             )
             .unwrap(),
             vec![(
-                MessageIdentifier("new".to_string(), None),
+                ("new", None),
                 IncorrectVersioning::ReferenceVersionGreaterOrEqual
             )],
         );
