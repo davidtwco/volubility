@@ -6,6 +6,8 @@ use fluent_syntax::{
 use std::{collections::HashMap, fmt, num::ParseIntError};
 use thiserror::Error;
 
+mod pretty;
+
 /// Default separator used with version suffixes.
 pub static DEFAULT_SEPARATOR: &'static str = "---";
 
