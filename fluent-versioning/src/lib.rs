@@ -5,6 +5,7 @@ use fluent_syntax::{
 use std::{collections::HashMap, fmt, num::ParseIntError};
 use thiserror::Error;
 
+mod owned;
 mod pretty;
 
 /// Default separator used with version suffixes.
