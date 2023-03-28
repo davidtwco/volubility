@@ -64,6 +64,10 @@ pub type MessageIdentifier<'a> = (&'a str, Option<&'a str>);
 /// Convenience alias for a message's content.
 type MessageContent<'a> = &'a Pattern<&'a str>;
 
+/// Convenience alias for the map between message identifiers and their version + content.
+type ReferenceMessages<'a> =
+    HashMap<MessageIdentifier<'a>, (Versioned, Option<MessageContent<'a>>)>;
+
 /// Reason for an incorrect versioning.
 #[derive(Debug, Eq, PartialEq)]
 pub enum IncorrectVersioning {
@@ -101,13 +105,13 @@ impl fmt::Display for IncorrectVersioning {
 /// okay or not (considering whether `value` changed from `reference_version_and_value`'s value).
 fn check_versioning(
     version: Versioned,
-    value: &Pattern<&str>,
-    reference_version_and_value: Option<&(Versioned, MessageContent<'_>)>,
+    value: Option<&Pattern<&str>>,
+    reference_version_and_value: Option<&(Versioned, Option<MessageContent<'_>>)>,
 ) -> Option<IncorrectVersioning> {
     let (reference_version, reference_value) = reference_version_and_value
-        .map(|(version, value)| (Some(version), Some(*value)))
+        .map(|(version, value)| (Some(version), *value))
         .unwrap_or((None, None));
-    let changed = Some(value) != reference_value;
+    let changed = value != reference_value;
 
     match (reference_version, version, changed) {
         // If the message is new and unversioned then that's okay.
@@ -177,25 +181,23 @@ fn check_versioning(
 fn collect_reference_messages<'a>(
     separator: &str,
     reference: &'a Resource<&'a str>,
-) -> Result<HashMap<MessageIdentifier<'a>, (Versioned, MessageContent<'a>)>> {
+) -> Result<ReferenceMessages<'a>> {
     let mut map = HashMap::new();
     for entry in &reference.body {
         match entry {
             Entry::Message(message) => {
                 let (id, version) = parse_versioned_identifier(separator, &message.id)?;
-                if let Some(value) = &message.value {
-                    map.insert((id, None), (version, value));
-                }
+                map.insert((id, None), (version, message.value.as_ref()));
 
                 for attribute in &message.attributes {
                     let (attribute_id, version) =
                         parse_versioned_identifier(separator, &attribute.id)?;
-                    map.insert((id, Some(attribute_id)), (version, &attribute.value));
+                    map.insert((id, Some(attribute_id)), (version, Some(&attribute.value)));
                 }
             }
             Entry::Term(term) => {
                 let (id, version) = parse_versioned_identifier(separator, &term.id)?;
-                map.insert((id, None), (version, &term.value));
+                map.insert((id, None), (version, Some(&term.value)));
             }
             Entry::Comment(_)
             | Entry::GroupComment(_)
@@ -208,7 +210,7 @@ fn collect_reference_messages<'a>(
 
 fn collect_incorrect_versioning<'refr, 'inpt>(
     separator: &str,
-    reference_messages: &HashMap<MessageIdentifier<'refr>, (Versioned, MessageContent<'refr>)>,
+    reference_messages: &ReferenceMessages<'refr>,
     input: Resource<&'inpt str>,
 ) -> Result<Vec<(MessageIdentifier<'inpt>, IncorrectVersioning)>> {
     let mut incorrect_versions = Vec::new();
@@ -216,22 +218,24 @@ fn collect_incorrect_versioning<'refr, 'inpt>(
         match entry {
             Entry::Message(message) => {
                 let (id, version) = parse_versioned_identifier(separator, &message.id)?;
-                if let Some(value) = &message.value {
-                    let key = (id, None);
-                    if let Some(error) =
-                        check_versioning(version, &value, reference_messages.get(&key))
-                    {
-                        incorrect_versions.push((key, error));
-                    }
+                let key = (id, None);
+                if let Some(error) = check_versioning(
+                    version,
+                    message.value.as_ref(),
+                    reference_messages.get(&key),
+                ) {
+                    incorrect_versions.push((key, error));
                 }
 
                 for attribute in &message.attributes {
                     let (attribute_id, version) =
                         parse_versioned_identifier(separator, &attribute.id)?;
                     let key = (id, Some(attribute_id));
-                    if let Some(error) =
-                        check_versioning(version, &attribute.value, reference_messages.get(&key))
-                    {
+                    if let Some(error) = check_versioning(
+                        version,
+                        Some(&attribute.value),
+                        reference_messages.get(&key),
+                    ) {
                         incorrect_versions.push((key, error));
                     }
                 }
@@ -240,7 +244,7 @@ fn collect_incorrect_versioning<'refr, 'inpt>(
                 let (id, version) = parse_versioned_identifier(separator, &term.id)?;
                 let key = (id, None);
                 if let Some(error) =
-                    check_versioning(version, &term.value, reference_messages.get(&key))
+                    check_versioning(version, Some(&term.value), reference_messages.get(&key))
                 {
                     incorrect_versions.push((key, error));
                 }
@@ -264,7 +268,7 @@ pub fn check<'refr, 'inpt>(
     let reference = parse(reference).map_err(|(_, mut errs)| {
         Error::ParseReference(errs.pop().expect("parsing failure w/ no errs"))
     })?;
-    let input: Resource<&'inpt str> = parse(input).map_err(|(_, mut errs)| {
+    let input = parse(input).map_err(|(_, mut errs)| {
         Error::ParseInput(errs.pop().expect("parsing failure w/ no errs"))
     })?;
 
