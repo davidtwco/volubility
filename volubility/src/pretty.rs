@@ -317,10 +317,7 @@ mod pretty_print_tests {
                 let parsed = parse(trimmed_code).unwrap();
                 let pretty = ForwardToPrettyPrint(parsed.clone()).to_string();
                 let pretty_parsed = parse(pretty.as_ref()).unwrap();
-
-                for (parsed, pretty_parsed) in parsed.body.iter().zip(pretty_parsed.body.iter()) {
-                    assert_eq!(parsed, pretty_parsed);
-                }
+                assert_eq!(parsed, pretty_parsed);
             }
         };
     }
