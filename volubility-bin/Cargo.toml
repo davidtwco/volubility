@@ -1,0 +1,22 @@
+[package]
+name = "volubility-bin"
+authors = [ "David Wood <david.wood@huawei.com>" ]
+description = "Check and rewrite Fluent messages with version suffixes"
+categories = [ "internationalization", "localization", "command-line-utilities" ]
+homepage = "https://docs.rs/volubility"
+keywords = [ "fluent", "versioning", "i18n", "l10n" ]
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/davidtwco/volubility"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = { version = "4.1.11", features = ["derive"] }
+volubility = { version = "0.1.0", path = "../volubility" }
+owo-colors = { version = "3.5.0", features = ["supports-colors"] }
+thiserror = "1.0.40"
+
+[[bin]]
+name = "volubility"
+path = "src/main.rs"

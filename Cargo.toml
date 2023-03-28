@@ -1,5 +1,5 @@
 [workspace]
 members = [
-  "fluent-versioning",
-  "fluent-versioning-bin"
+  "volubility",
+  "volubility-bin"
 ]

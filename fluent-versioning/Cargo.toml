@@ -1,8 +1,0 @@
-[package]
-name = "fluent-versioning"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-fluent-syntax = "0.11.0"
-thiserror = "1.0.40"

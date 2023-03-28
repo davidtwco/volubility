@@ -1,5 +1,4 @@
 use clap::Parser;
-use fluent_versioning::{check, rewrite_to_string, DEFAULT_SEPARATOR};
 use owo_colors::{OwoColorize, Stream};
 use std::{
     borrow::Cow,
@@ -9,6 +8,7 @@ use std::{
     path::PathBuf,
 };
 use thiserror::Error;
+use volubility::{check, rewrite_to_string, DEFAULT_SEPARATOR};
 
 /// Errors that can occur while performing Fluent versioning.
 #[derive(Debug, Error)]
@@ -22,7 +22,7 @@ enum Error {
     #[error("`--output` cannot be used in check mode")]
     CheckWithOutput,
     #[error("Failed to validate Fluent versioning")]
-    Versioning(#[from] fluent_versioning::Error),
+    Versioning(#[from] volubility::Error),
     #[error("Failed to write output file")]
     WriteOutputFile(#[source] io::Error),
 }
@@ -87,8 +87,8 @@ impl Write for Output {
 
 /// Fluent resource versioning for Pontoon.
 ///
-/// Pontoon does not handle updates to Fluent messages - if `foo` is changed in a Fluent resource
-/// then translators will not be prompted to udpate their translation.
+/// Pontoon does not handle updates to Fluent messages - if some message `foo` is changed in a
+/// Fluent resource then translators will not be prompted to update their translation.
 ///
 /// Instead of asking compiler developers to change the message identifier whenever a message is
 /// changed, an version number is added as a suffix.

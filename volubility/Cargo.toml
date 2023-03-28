@@ -1,0 +1,16 @@
+[package]
+name = "volubility"
+authors = [ "David Wood <david.wood@huawei.com>" ]
+description = "Library for checking and rewriting Fluent messages with version suffixes"
+categories = [ "internationalization", "localization" ]
+homepage = "https://docs.rs/volubility"
+keywords = [ "fluent", "versioning", "i18n", "l10n" ]
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/davidtwco/volubility"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fluent-syntax = "0.11.0"
+thiserror = "1.0.40"
