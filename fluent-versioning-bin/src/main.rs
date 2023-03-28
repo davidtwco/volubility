@@ -1,11 +1,11 @@
 use clap::Parser;
-use fluent_versioning::{check, DEFAULT_SEPARATOR};
+use fluent_versioning::{check, rewrite_to_string, DEFAULT_SEPARATOR};
 use owo_colors::{OwoColorize, Stream};
 use std::{
     borrow::Cow,
     ffi::OsStr,
     fs::{read_to_string, File, OpenOptions},
-    io,
+    io::{self, Write},
     path::PathBuf,
 };
 use thiserror::Error;
@@ -21,8 +21,10 @@ enum Error {
     CreateOutputFile(#[source] io::Error),
     #[error("`--output` cannot be used in check mode")]
     CheckWithOutput,
-    #[error("Failed to validate Fluent versioning ")]
+    #[error("Failed to validate Fluent versioning")]
     Versioning(#[from] fluent_versioning::Error),
+    #[error("Failed to write output file")]
+    WriteOutputFile(#[source] io::Error),
 }
 
 /// Convenience alias for `Result`'s of this crate's `Error`.
@@ -69,7 +71,7 @@ impl Output {
     }
 }
 
-impl io::Write for Output {
+impl Write for Output {
     fn flush(&mut self) -> io::Result<()> {
         match self {
             Output::Stdout(stdout) => stdout.flush(),
@@ -147,11 +149,15 @@ fn main() -> Result<()> {
         }
         Ok(())
     } else {
-        let _output = args
+        let mut output = args
             .output
             .map(|path| Output::new(path.as_os_str()))
             .unwrap_or_else(|| Output::new(OsStr::new("-")))
             .map_err(Error::CreateOutputFile)?;
-        unimplemented!();
+        let rewritten_input =
+            rewrite_to_string(&args.suffix_separator, &reference_str, &input_str)?;
+        output
+            .write_all(rewritten_input.as_bytes())
+            .map_err(Error::WriteOutputFile)
     }
 }

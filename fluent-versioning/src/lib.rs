@@ -5,10 +5,12 @@ use fluent_syntax::{
 use std::{collections::HashMap, fmt, num::ParseIntError};
 use thiserror::Error;
 
+mod deref;
 mod owned;
 mod pretty;
 
 pub use crate::pretty::to_string;
+use crate::{deref::DerefNode, owned::ToOwnedNode};
 
 /// Default separator used with version suffixes.
 pub static DEFAULT_SEPARATOR: &'static str = "---";
@@ -34,23 +36,22 @@ enum Versioned {
     Unversioned,
 }
 
-/// Parse a versioned identifier from a Fluent `Identifier` AST node.
-///
-/// Splits the Fluent message identifier string according to this project's conventions
-/// (i.e. a `separator` suffix).
-fn parse_versioned_identifier<'a>(
-    separator: &str,
-    identifier: &Identifier<&'a str>,
-) -> Result<(&'a str, Versioned)> {
-    match identifier.name.split_once(separator) {
-        None => Ok((identifier.name, Versioned::Unversioned)),
-        Some((identifier, "")) => Ok((identifier, Versioned::Unversioned)),
-        Some((identifier, version)) => Ok((
-            identifier,
-            Versioned::Versioned(
-                usize::from_str_radix(version, 10).map_err(Error::InvalidVersion)?,
-            ),
-        )),
+impl Versioned {
+    /// Parse a versioned identifier from a Fluent `Identifier` AST node.
+    ///
+    /// Splits the Fluent message identifier string according to this project's conventions
+    /// (i.e. a `separator` suffix).
+    fn parse<'id>(separator: &str, identifier: &Identifier<&'id str>) -> Result<(&'id str, Self)> {
+        match identifier.name.split_once(separator) {
+            None => Ok((identifier.name, Versioned::Unversioned)),
+            Some((identifier, "")) => Ok((identifier, Versioned::Unversioned)),
+            Some((identifier, version)) => Ok((
+                identifier,
+                Versioned::Versioned(
+                    usize::from_str_radix(version, 10).map_err(Error::InvalidVersion)?,
+                ),
+            )),
+        }
     }
 }
 
@@ -77,6 +78,8 @@ pub enum IncorrectVersioning {
     NoInitialVersion,
     /// Versioned message had its version removed.
     VersionRemoved,
+    /// Versioned message had its version removed but it should have been incremented.
+    VersionRemovedNotIncrement,
     /// Versioned message had its version changed despite the message content not changing.
     UnnecessaryVersionChange,
     /// Versioned message was changed but its version is lower than that of the reference.
@@ -91,6 +94,9 @@ impl fmt::Display for IncorrectVersioning {
                 write!(f, "message has changed without being versioned")
             }
             IncorrectVersioning::VersionRemoved => write!(f, "version was removed"),
+            IncorrectVersioning::VersionRemovedNotIncrement => {
+                write!(f, "version was removed but should have been incremented")
+            }
             IncorrectVersioning::UnnecessaryVersionChange => {
                 write!(f, "unnecessary version change")
             }
@@ -138,8 +144,14 @@ fn check_versioning(
         }
         // If the message isn't new, was previously versioned and now isn't, that's an
         // error.
-        (Some(Versioned::Versioned(_)), Versioned::Unversioned, _) => {
+        (Some(Versioned::Versioned(_)), Versioned::Unversioned, false) => {
             Some(IncorrectVersioning::VersionRemoved)
+        }
+        // If the message isn't new, was previously versioned and now isn't, that's an
+        // error - but if it changed, then we don't just want to re-add the reference version,
+        // we should increment.
+        (Some(Versioned::Versioned(_)), Versioned::Unversioned, true) => {
+            Some(IncorrectVersioning::VersionRemovedNotIncrement)
         }
         // If the message isn't new, was previously versioned and remains versioned,
         // the versions match, and the message wasn't changed, then that's okay.
@@ -186,17 +198,16 @@ fn collect_reference_messages<'a>(
     for entry in &reference.body {
         match entry {
             Entry::Message(message) => {
-                let (id, version) = parse_versioned_identifier(separator, &message.id)?;
+                let (id, version) = Versioned::parse(separator, &message.id)?;
                 map.insert((id, None), (version, message.value.as_ref()));
 
                 for attribute in &message.attributes {
-                    let (attribute_id, version) =
-                        parse_versioned_identifier(separator, &attribute.id)?;
+                    let (attribute_id, version) = Versioned::parse(separator, &attribute.id)?;
                     map.insert((id, Some(attribute_id)), (version, Some(&attribute.value)));
                 }
             }
             Entry::Term(term) => {
-                let (id, version) = parse_versioned_identifier(separator, &term.id)?;
+                let (id, version) = Versioned::parse(separator, &term.id)?;
                 map.insert((id, None), (version, Some(&term.value)));
             }
             Entry::Comment(_)
@@ -217,7 +228,7 @@ fn collect_incorrect_versioning<'refr, 'inpt>(
     for entry in &input.body {
         match entry {
             Entry::Message(message) => {
-                let (id, version) = parse_versioned_identifier(separator, &message.id)?;
+                let (id, version) = Versioned::parse(separator, &message.id)?;
                 let key = (id, None);
                 if let Some(error) = check_versioning(
                     version,
@@ -228,8 +239,7 @@ fn collect_incorrect_versioning<'refr, 'inpt>(
                 }
 
                 for attribute in &message.attributes {
-                    let (attribute_id, version) =
-                        parse_versioned_identifier(separator, &attribute.id)?;
+                    let (attribute_id, version) = Versioned::parse(separator, &attribute.id)?;
                     let key = (id, Some(attribute_id));
                     if let Some(error) = check_versioning(
                         version,
@@ -241,7 +251,7 @@ fn collect_incorrect_versioning<'refr, 'inpt>(
                 }
             }
             Entry::Term(term) => {
-                let (id, version) = parse_versioned_identifier(separator, &term.id)?;
+                let (id, version) = Versioned::parse(separator, &term.id)?;
                 let key = (id, None);
                 if let Some(error) =
                     check_versioning(version, Some(&term.value), reference_messages.get(&key))
@@ -256,6 +266,95 @@ fn collect_incorrect_versioning<'refr, 'inpt>(
         }
     }
     Ok(incorrect_versions)
+}
+
+fn compute_correct_version(
+    reference_version: Option<Versioned>,
+    incorrect_versioning: IncorrectVersioning,
+) -> usize {
+    let reference_version = reference_version
+        .map(|version| match version {
+            Versioned::Unversioned => 1,
+            Versioned::Versioned(version) => version,
+        })
+        .unwrap_or(1);
+    let correct_version = match incorrect_versioning {
+        IncorrectVersioning::BadInitialVersion | IncorrectVersioning::NoInitialVersion => 1,
+        IncorrectVersioning::VersionRemoved | IncorrectVersioning::UnnecessaryVersionChange => {
+            reference_version
+        }
+        IncorrectVersioning::VersionRemovedNotIncrement
+        | IncorrectVersioning::ReferenceVersionGreaterOrEqual => reference_version + 1,
+    };
+    correct_version
+}
+
+fn rewrite_identifier(separator: &str, name: &str, new_version: usize) -> Identifier<String> {
+    Identifier {
+        name: format!("{name}{separator}{new_version}"),
+    }
+}
+
+fn rewrite_entries<'refr, 'inpt>(
+    separator: &str,
+    reference_messages: &ReferenceMessages<'refr>,
+    input: Resource<&'inpt str>,
+) -> Result<Resource<String>> {
+    let mut output: Resource<String> = input.to_owned_node();
+    for entry in &mut output.body {
+        match entry {
+            Entry::Message(message) => {
+                let (id, version) = Versioned::parse(separator, &message.id.deref_node())?;
+                for attribute in &mut message.attributes {
+                    let (attribute_id, version) =
+                        Versioned::parse(separator, &attribute.id.deref_node())?;
+                    let reference = reference_messages.get(&(id, Some(attribute_id)));
+                    if let Some(error) =
+                        check_versioning(version, Some(&attribute.value.deref_node()), reference)
+                    {
+                        attribute.id = rewrite_identifier(
+                            separator,
+                            attribute_id,
+                            compute_correct_version(reference.map(|(version, _)| *version), error),
+                        );
+                    }
+                }
+
+                // Attributes are processed first when re-writing so that all uses of the
+                // `message.id` borrow have ended prior to rewriting `message.id`.
+                let reference = reference_messages.get(&(id, None));
+                if let Some(error) = check_versioning(
+                    version,
+                    message.value.as_ref().map(|val| val.deref_node()).as_ref(),
+                    reference,
+                ) {
+                    message.id = rewrite_identifier(
+                        separator,
+                        id,
+                        compute_correct_version(reference.map(|(version, _)| *version), error),
+                    );
+                }
+            }
+            Entry::Term(term) => {
+                let (id, version) = Versioned::parse(separator, &term.id.deref_node())?;
+                let reference = reference_messages.get(&(id, None));
+                if let Some(error) =
+                    check_versioning(version, Some(&term.value.deref_node()), reference)
+                {
+                    term.id = rewrite_identifier(
+                        separator,
+                        id,
+                        compute_correct_version(reference.map(|(version, _)| *version), error),
+                    );
+                }
+            }
+            Entry::Comment(_)
+            | Entry::GroupComment(_)
+            | Entry::ResourceComment(_)
+            | Entry::Junk { .. } => continue,
+        }
+    }
+    Ok(output)
 }
 
 /// Check that the Fluent source `input_src` is appropriately versioned given an unversioned or
@@ -276,15 +375,43 @@ pub fn check<'refr, 'inpt>(
     collect_incorrect_versioning(separator, &reference_messages, input)
 }
 
+/// Rewrite `input` to have versioned messages given `reference`, returning Fluent AST.
+pub fn rewrite<'refr, 'inpt>(
+    separator: &str,
+    reference: &'refr str,
+    input: &'inpt str,
+) -> Result<Resource<String>> {
+    let reference = parse(reference).map_err(|(_, mut errs)| {
+        Error::ParseReference(errs.pop().expect("parsing failure w/ no errs"))
+    })?;
+    let input: Resource<&'inpt str> = parse(input).map_err(|(_, mut errs)| {
+        Error::ParseInput(errs.pop().expect("parsing failure w/ no errs"))
+    })?;
+
+    let reference_messages = collect_reference_messages(separator, &reference)?;
+    let output = rewrite_entries(separator, &reference_messages, input)?;
+    Ok(output)
+}
+
+/// Rewrite `input` to have versioned messages given `reference`, returning pretty-printed Fluent
+/// source.
+pub fn rewrite_to_string<'refr, 'inpt>(
+    separator: &str,
+    reference: &'refr str,
+    input: &'inpt str,
+) -> Result<String> {
+    rewrite(separator, reference, input).map(|resource| to_string(resource))
+}
+
 #[cfg(test)]
 mod versioned_identifier_tests {
-    use super::{parse_versioned_identifier, Versioned, DEFAULT_SEPARATOR};
+    use super::{Versioned, DEFAULT_SEPARATOR};
     use fluent_syntax::ast::Identifier;
 
     #[test]
     fn no_separator_suffix() {
         assert_eq!(
-            parse_versioned_identifier(DEFAULT_SEPARATOR, &Identifier { name: "foo" }).unwrap(),
+            Versioned::parse(DEFAULT_SEPARATOR, &Identifier { name: "foo" }).unwrap(),
             ("foo", Versioned::Unversioned)
         );
     }
@@ -292,7 +419,7 @@ mod versioned_identifier_tests {
     #[test]
     fn separator_suffix_without_version() {
         assert_eq!(
-            parse_versioned_identifier(DEFAULT_SEPARATOR, &Identifier { name: "foo---" }).unwrap(),
+            Versioned::parse(DEFAULT_SEPARATOR, &Identifier { name: "foo---" }).unwrap(),
             ("foo", Versioned::Unversioned)
         );
     }
@@ -300,18 +427,14 @@ mod versioned_identifier_tests {
     #[test]
     fn separator_suffix_with_version() {
         assert_eq!(
-            parse_versioned_identifier(DEFAULT_SEPARATOR, &Identifier { name: "foo---123" })
-                .unwrap(),
+            Versioned::parse(DEFAULT_SEPARATOR, &Identifier { name: "foo---123" }).unwrap(),
             ("foo", Versioned::Versioned(123))
         );
     }
 
     #[test]
     fn separator_suffix_with_invalid_version() {
-        assert!(
-            parse_versioned_identifier(DEFAULT_SEPARATOR, &Identifier { name: "foo---abc" })
-                .is_err(),
-        );
+        assert!(Versioned::parse(DEFAULT_SEPARATOR, &Identifier { name: "foo---abc" }).is_err(),);
     }
 }
 
@@ -423,7 +546,10 @@ mod check_tests {
                 "new = different content",
             )
             .unwrap(),
-            vec![(("new", None), IncorrectVersioning::VersionRemoved)],
+            vec![(
+                ("new", None),
+                IncorrectVersioning::VersionRemovedNotIncrement
+            )],
         );
     }
 
@@ -493,6 +619,185 @@ mod check_tests {
                 ("new", None),
                 IncorrectVersioning::ReferenceVersionGreaterOrEqual
             )],
+        );
+    }
+}
+
+#[cfg(test)]
+mod rewrite_tests {
+    use super::{rewrite_to_string, DEFAULT_SEPARATOR};
+
+    #[test]
+    fn new_unversioned() {
+        assert_eq!(
+            rewrite_to_string(DEFAULT_SEPARATOR, "", "new = content",).unwrap(),
+            "new = content"
+        );
+    }
+
+    #[test]
+    fn new_initial_version_eq_one() {
+        assert_eq!(
+            rewrite_to_string(DEFAULT_SEPARATOR, "", "new---1 = content",).unwrap(),
+            "new---1 = content"
+        );
+    }
+
+    #[test]
+    fn new_initial_version_gt_one() {
+        assert_eq!(
+            rewrite_to_string(DEFAULT_SEPARATOR, "", "new---2 = content",).unwrap(),
+            "new---1 = content"
+        );
+    }
+
+    #[test]
+    fn existing_unversioned_unchanged() {
+        assert_eq!(
+            rewrite_to_string(DEFAULT_SEPARATOR, "new = content", "new = content",).unwrap(),
+            "new = content"
+        );
+    }
+
+    #[test]
+    fn existing_unversioned_changed() {
+        assert_eq!(
+            rewrite_to_string(
+                DEFAULT_SEPARATOR,
+                "new = content",
+                "new = different content",
+            )
+            .unwrap(),
+            "new---1 = different content"
+        );
+    }
+
+    #[test]
+    fn existing_initial_version_eq_one_unchanged() {
+        assert_eq!(
+            rewrite_to_string(DEFAULT_SEPARATOR, "new = content", "new---1 = content",).unwrap(),
+            "new---1 = content"
+        );
+    }
+
+    #[test]
+    fn existing_initial_version_eq_one_changed() {
+        assert_eq!(
+            rewrite_to_string(
+                DEFAULT_SEPARATOR,
+                "new = content",
+                "new---1 = different content",
+            )
+            .unwrap(),
+            "new---1 = different content"
+        );
+    }
+
+    #[test]
+    fn existing_initial_version_gt_one_unchanged() {
+        assert_eq!(
+            rewrite_to_string(DEFAULT_SEPARATOR, "new = content", "new---2 = content",).unwrap(),
+            "new---1 = content"
+        );
+    }
+
+    #[test]
+    fn existing_initial_version_gt_one_changed() {
+        assert_eq!(
+            rewrite_to_string(
+                DEFAULT_SEPARATOR,
+                "new = content",
+                "new---2 = different content",
+            )
+            .unwrap(),
+            "new---1 = different content"
+        );
+    }
+
+    #[test]
+    fn existing_version_removed_unchanged() {
+        assert_eq!(
+            rewrite_to_string(DEFAULT_SEPARATOR, "new---1 = content", "new = content",).unwrap(),
+            "new---1 = content"
+        );
+    }
+
+    #[test]
+    fn existing_version_removed_changed() {
+        assert_eq!(
+            rewrite_to_string(
+                DEFAULT_SEPARATOR,
+                "new---1 = content",
+                "new = different content",
+            )
+            .unwrap(),
+            "new---2 = different content"
+        );
+    }
+
+    #[test]
+    fn existing_matching_version_unchanged() {
+        assert_eq!(
+            rewrite_to_string(DEFAULT_SEPARATOR, "new---1 = content", "new---1 = content",)
+                .unwrap(),
+            "new---1 = content"
+        );
+    }
+
+    #[test]
+    fn existing_mismatching_version_ref_unchanged() {
+        assert_eq!(
+            rewrite_to_string(DEFAULT_SEPARATOR, "new---2 = content", "new---1 = content",)
+                .unwrap(),
+            "new---2 = content"
+        );
+    }
+
+    #[test]
+    fn existing_mismatching_version_inpt_unchanged() {
+        assert_eq!(
+            rewrite_to_string(DEFAULT_SEPARATOR, "new---1 = content", "new---2 = content",)
+                .unwrap(),
+            "new---1 = content"
+        );
+    }
+
+    #[test]
+    fn existing_increased_version_changed() {
+        assert_eq!(
+            rewrite_to_string(
+                DEFAULT_SEPARATOR,
+                "new---1 = content",
+                "new---2 = different content",
+            )
+            .unwrap(),
+            "new---2 = different content",
+        );
+    }
+
+    #[test]
+    fn existing_lower_version_changed() {
+        assert_eq!(
+            rewrite_to_string(
+                DEFAULT_SEPARATOR,
+                "new---2 = content",
+                "new---1 = different content",
+            )
+            .unwrap(),
+            "new---3 = different content"
+        );
+    }
+
+    #[test]
+    fn existing_matching_version_changed() {
+        assert_eq!(
+            rewrite_to_string(
+                DEFAULT_SEPARATOR,
+                "new---2 = content",
+                "new---2 = different content",
+            )
+            .unwrap(),
+            "new---3 = different content"
         );
     }
 }
