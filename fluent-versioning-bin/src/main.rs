@@ -57,12 +57,8 @@ impl Output {
             return Ok(Output::Stdout(io::stdout()));
         }
 
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(path)?;
+        let file =
+            OpenOptions::new().read(true).write(true).create(true).truncate(true).open(path)?;
         if is_fifo(file.metadata()?.file_type()) {
             Ok(Output::File(file))
         } else {
@@ -156,8 +152,6 @@ fn main() -> Result<()> {
             .map_err(Error::CreateOutputFile)?;
         let rewritten_input =
             rewrite_to_string(&args.suffix_separator, &reference_str, &input_str)?;
-        output
-            .write_all(rewritten_input.as_bytes())
-            .map_err(Error::WriteOutputFile)
+        output.write_all(rewritten_input.as_bytes()).map_err(Error::WriteOutputFile)
     }
 }

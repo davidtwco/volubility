@@ -92,8 +92,7 @@ impl<S: fmt::Display> PrettyPrint for Term<S> {
         write!(f, "-")?;
         self.id.print(indentation_depth, f)?;
         writeln!(f, " = ")?;
-        self.value
-            .print(indentation_depth + INDENTATION_INCREMENT, f)?;
+        self.value.print(indentation_depth + INDENTATION_INCREMENT, f)?;
         for attribute in &self.attributes {
             writeln!(f, "")?;
             let indentation_depth = indentation_depth + INDENTATION_INCREMENT;
@@ -124,10 +123,7 @@ impl<S: fmt::Display> PrettyPrint for Pattern<S> {
     fn print(&self, indentation_depth: usize, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // `windows(2)` is used below, so exit early if there's one element.
         if self.elements.len() == 1 {
-            self.elements
-                .first()
-                .expect("length check was wrong")
-                .print(indentation_depth, f)?;
+            self.elements.first().expect("length check was wrong").print(indentation_depth, f)?;
             return Ok(());
         }
 
@@ -140,10 +136,7 @@ impl<S: fmt::Display> PrettyPrint for Pattern<S> {
             current.print(indentation_depth, f)?;
             let next_continues_multiline = matches!(
                 (current, next),
-                (
-                    PatternElement::TextElement { .. },
-                    PatternElement::TextElement { .. }
-                )
+                (PatternElement::TextElement { .. }, PatternElement::TextElement { .. })
             );
             if next_continues_multiline {
                 print_indentation_at(indentation_depth, f)?;
@@ -152,10 +145,7 @@ impl<S: fmt::Display> PrettyPrint for Pattern<S> {
 
         // For `[a, b, c]`, `windows` will see `[a, b]` then `[b, c]`. Only the first element in
         // each window is printed, so `c` needs to be printed afterwards.
-        self.elements
-            .last()
-            .expect("must be at least two elements")
-            .print(indentation_depth, f)?;
+        self.elements.last().expect("must be at least two elements").print(indentation_depth, f)?;
 
         Ok(())
     }
@@ -242,11 +232,7 @@ impl<S: fmt::Display> PrettyPrint for InlineExpression<S> {
                 }
                 Ok(())
             }
-            InlineExpression::TermReference {
-                id,
-                attribute,
-                arguments,
-            } => {
+            InlineExpression::TermReference { id, attribute, arguments } => {
                 write!(f, "-")?;
                 id.print(indentation_depth, f)?;
                 if let Some(attribute) = attribute {

@@ -230,11 +230,9 @@ fn collect_incorrect_versioning<'refr, 'inpt>(
             Entry::Message(message) => {
                 let (id, version) = Versioned::parse(separator, &message.id)?;
                 let key = (id, None);
-                if let Some(error) = check_versioning(
-                    version,
-                    message.value.as_ref(),
-                    reference_messages.get(&key),
-                ) {
+                if let Some(error) =
+                    check_versioning(version, message.value.as_ref(), reference_messages.get(&key))
+                {
                     incorrect_versions.push((key, error));
                 }
 
@@ -290,9 +288,7 @@ fn compute_correct_version(
 }
 
 fn rewrite_identifier(separator: &str, name: &str, new_version: usize) -> Identifier<String> {
-    Identifier {
-        name: format!("{name}{separator}{new_version}"),
-    }
+    Identifier { name: format!("{name}{separator}{new_version}") }
 }
 
 fn rewrite_entries<'refr, 'inpt>(
@@ -444,18 +440,12 @@ mod check_tests {
 
     #[test]
     fn new_unversioned() {
-        assert_eq!(
-            check(DEFAULT_SEPARATOR, "", "new = content",).unwrap(),
-            vec![],
-        );
+        assert_eq!(check(DEFAULT_SEPARATOR, "", "new = content",).unwrap(), vec![],);
     }
 
     #[test]
     fn new_initial_version_eq_one() {
-        assert_eq!(
-            check(DEFAULT_SEPARATOR, "", "new---1 = content",).unwrap(),
-            vec![],
-        );
+        assert_eq!(check(DEFAULT_SEPARATOR, "", "new---1 = content",).unwrap(), vec![],);
     }
 
     #[test]
@@ -468,21 +458,13 @@ mod check_tests {
 
     #[test]
     fn existing_unversioned_unchanged() {
-        assert_eq!(
-            check(DEFAULT_SEPARATOR, "new = content", "new = content",).unwrap(),
-            vec![],
-        );
+        assert_eq!(check(DEFAULT_SEPARATOR, "new = content", "new = content",).unwrap(), vec![],);
     }
 
     #[test]
     fn existing_unversioned_changed() {
         assert_eq!(
-            check(
-                DEFAULT_SEPARATOR,
-                "new = content",
-                "new = different content",
-            )
-            .unwrap(),
+            check(DEFAULT_SEPARATOR, "new = content", "new = different content",).unwrap(),
             vec![(("new", None), IncorrectVersioning::NoInitialVersion)],
         );
     }
@@ -498,12 +480,7 @@ mod check_tests {
     #[test]
     fn existing_initial_version_eq_one_changed() {
         assert_eq!(
-            check(
-                DEFAULT_SEPARATOR,
-                "new = content",
-                "new---1 = different content",
-            )
-            .unwrap(),
+            check(DEFAULT_SEPARATOR, "new = content", "new---1 = different content",).unwrap(),
             vec![],
         );
     }
@@ -519,12 +496,7 @@ mod check_tests {
     #[test]
     fn existing_initial_version_gt_one_changed() {
         assert_eq!(
-            check(
-                DEFAULT_SEPARATOR,
-                "new = content",
-                "new---2 = different content",
-            )
-            .unwrap(),
+            check(DEFAULT_SEPARATOR, "new = content", "new---2 = different content",).unwrap(),
             vec![(("new", None), IncorrectVersioning::BadInitialVersion)],
         );
     }
@@ -540,16 +512,8 @@ mod check_tests {
     #[test]
     fn existing_version_removed_changed() {
         assert_eq!(
-            check(
-                DEFAULT_SEPARATOR,
-                "new---1 = content",
-                "new = different content",
-            )
-            .unwrap(),
-            vec![(
-                ("new", None),
-                IncorrectVersioning::VersionRemovedNotIncrement
-            )],
+            check(DEFAULT_SEPARATOR, "new---1 = content", "new = different content",).unwrap(),
+            vec![(("new", None), IncorrectVersioning::VersionRemovedNotIncrement)],
         );
     }
 
@@ -580,12 +544,7 @@ mod check_tests {
     #[test]
     fn existing_increased_version_changed() {
         assert_eq!(
-            check(
-                DEFAULT_SEPARATOR,
-                "new---1 = content",
-                "new---2 = different content",
-            )
-            .unwrap(),
+            check(DEFAULT_SEPARATOR, "new---1 = content", "new---2 = different content",).unwrap(),
             vec![],
         );
     }
@@ -593,32 +552,16 @@ mod check_tests {
     #[test]
     fn existing_lower_version_changed() {
         assert_eq!(
-            check(
-                DEFAULT_SEPARATOR,
-                "new---2 = content",
-                "new---1 = different content",
-            )
-            .unwrap(),
-            vec![(
-                ("new", None),
-                IncorrectVersioning::ReferenceVersionGreaterOrEqual
-            )],
+            check(DEFAULT_SEPARATOR, "new---2 = content", "new---1 = different content",).unwrap(),
+            vec![(("new", None), IncorrectVersioning::ReferenceVersionGreaterOrEqual)],
         );
     }
 
     #[test]
     fn existing_matching_version_changed() {
         assert_eq!(
-            check(
-                DEFAULT_SEPARATOR,
-                "new---2 = content",
-                "new---2 = different content",
-            )
-            .unwrap(),
-            vec![(
-                ("new", None),
-                IncorrectVersioning::ReferenceVersionGreaterOrEqual
-            )],
+            check(DEFAULT_SEPARATOR, "new---2 = content", "new---2 = different content",).unwrap(),
+            vec![(("new", None), IncorrectVersioning::ReferenceVersionGreaterOrEqual)],
         );
     }
 }
@@ -662,12 +605,8 @@ mod rewrite_tests {
     #[test]
     fn existing_unversioned_changed() {
         assert_eq!(
-            rewrite_to_string(
-                DEFAULT_SEPARATOR,
-                "new = content",
-                "new = different content",
-            )
-            .unwrap(),
+            rewrite_to_string(DEFAULT_SEPARATOR, "new = content", "new = different content",)
+                .unwrap(),
             "new---1 = different content"
         );
     }
@@ -683,12 +622,8 @@ mod rewrite_tests {
     #[test]
     fn existing_initial_version_eq_one_changed() {
         assert_eq!(
-            rewrite_to_string(
-                DEFAULT_SEPARATOR,
-                "new = content",
-                "new---1 = different content",
-            )
-            .unwrap(),
+            rewrite_to_string(DEFAULT_SEPARATOR, "new = content", "new---1 = different content",)
+                .unwrap(),
             "new---1 = different content"
         );
     }
@@ -704,12 +639,8 @@ mod rewrite_tests {
     #[test]
     fn existing_initial_version_gt_one_changed() {
         assert_eq!(
-            rewrite_to_string(
-                DEFAULT_SEPARATOR,
-                "new = content",
-                "new---2 = different content",
-            )
-            .unwrap(),
+            rewrite_to_string(DEFAULT_SEPARATOR, "new = content", "new---2 = different content",)
+                .unwrap(),
             "new---1 = different content"
         );
     }
@@ -725,12 +656,8 @@ mod rewrite_tests {
     #[test]
     fn existing_version_removed_changed() {
         assert_eq!(
-            rewrite_to_string(
-                DEFAULT_SEPARATOR,
-                "new---1 = content",
-                "new = different content",
-            )
-            .unwrap(),
+            rewrite_to_string(DEFAULT_SEPARATOR, "new---1 = content", "new = different content",)
+                .unwrap(),
             "new---2 = different content"
         );
     }
